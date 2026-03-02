@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.env
+
+# uv / Environment
+uv.lock
+
+# Data & Models
+data/
+models/
+*.csv
+*.json
+*.pt
+*.bin
+*.safetensors
+*.gguf
+
+# Jupyter
+.ipynb_checkpoints
