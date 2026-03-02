@@ -1,0 +1,96 @@
+# ============================================================
+# AINM2026 - Docker Compose
+#
+# Profiles:
+#   default  → API only (uses cloud LLM or pre-loaded models)
+#   local    → API + Ollama (fully offline, no cloud dependency)
+#   dev      → API with hot-reload (development mode)
+#
+# Usage:
+#   docker compose up                          # default (cloud mode)
+#   docker compose --profile local up          # full offline stack
+#   docker compose --profile dev up            # development
+#   docker compose --profile local --profile dev up  # offline dev
+# ============================================================
+
+services:
+
+  # ---- Main API Service ----
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: ainm2026_api
+    ports:
+      - "8000:8000"
+    volumes:
+      # Persist vector DB and uploaded data between restarts
+      - ./data:/app/data
+      # Persist trained model artifacts between restarts
+      - ./models:/app/models
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      ollama:
+        condition: service_healthy
+        required: false
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # ---- Development API (hot-reload) ----
+  api_dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: ainm2026_api_dev
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount source code for hot-reload to work
+      - .:/app
+      - ./data:/app/data
+      - ./models:/app/models
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    profiles:
+      - dev
+
+  # ---- Ollama (Local Offline LLM) ----
+  # Only started when using --profile local
+  # All models are persisted in a named volume so they survive restarts
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ainm2026_ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    environment:
+      - OLLAMA_KEEP_ALIVE=24h
+    restart: unless-stopped
+    profiles:
+      - local
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+volumes:
+  # Named volume so Ollama models survive docker compose down
+  # Use 'docker volume rm ainm2026_ollama_models' only when you want a full wipe
+  ollama_models:
+    name: ainm2026_ollama_models
