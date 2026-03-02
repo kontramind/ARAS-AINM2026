@@ -19,3 +19,9 @@ models/
 
 # Jupyter
 .ipynb_checkpoints
+
+# Temp files
+tmp/
+*.log
+*.bak
+*.tmp   
