@@ -4,45 +4,49 @@ from dotenv import load_dotenv
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.embeddings import Embeddings
 
-# Load environment variables
 load_dotenv()
 
 def get_llm() -> BaseChatModel:
     """
-    Returns a ChatModel based on the LLM_PROVIDER env variable.
+    Returns a ChatModel based on LLM_PROVIDER.
     """
     provider = os.getenv("LLM_PROVIDER", "ollama").lower()
+    temp = float(os.getenv("LLM_TEMPERATURE", "0.0"))
     
-    # Get temperature from env, default to 0.0 for standard models, 
-    # but strictly use 1.0 if using o1-preview/reasoning models.
-    # We default to 1.0 here because your error explicitly requested it.
-    temp = float(os.getenv("LLM_TEMPERATURE", "1.0"))
-    
-    print(f"🏭 Factory: Initializing LLM provider -> {provider.upper()} (Temp: {temp})")
+    print(f"🏭 Factory: Initializing LLM -> {provider.upper()} (Temp: {temp})")
 
     try:
-        if provider == "azure":
+        # PATH 1: Native Azure (Best for GPT-4, o1)
+        if provider == "azure_native":
             from langchain_openai import AzureChatOpenAI
-            
-            endpoint = os.getenv("AZURE_API_BASE")
-            key = os.getenv("AZURE_API_KEY")
-            deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT_MODEL")
-            
-            if not all([endpoint, key, deployment]):
-                raise ValueError("❌ Azure config missing! Check AZURE_API_BASE, KEY, and DEPLOYMENT_MODEL.")
-
             return AzureChatOpenAI(
-                azure_deployment=deployment,
-                api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-08-01-preview"),
-                azure_endpoint=endpoint,
-                api_key=key,
+                azure_deployment=os.getenv("AZURE_DEPLOYMENT_NAME"),
+                api_version=os.getenv("AZURE_API_VERSION"),
+                azure_endpoint=os.getenv("AZURE_API_BASE"),
+                api_key=os.getenv("AZURE_API_KEY"),
                 temperature=temp 
             )
 
-        elif provider == "openai":
+        # PATH 2: OpenAI Compatible (The Universal Adapter)
+        # Works for Azure DeepSeek, Azure Mistral, vLLM, Groq, etc.
+        elif provider == "openai_compatible":
             from langchain_openai import ChatOpenAI
-            return ChatOpenAI(model="gpt-4o-mini", temperature=temp)
+            
+            base_url = os.getenv("OPENAI_COMPATIBLE_BASE_URL")
+            api_key = os.getenv("OPENAI_COMPATIBLE_API_KEY")
+            model = os.getenv("OPENAI_COMPATIBLE_MODEL")
 
+            if not all([base_url, api_key, model]):
+                raise ValueError("❌ Provider is 'openai_compatible' but BASE_URL, API_KEY, or MODEL is missing.")
+
+            return ChatOpenAI(
+                base_url=base_url,
+                api_key=api_key,
+                model=model,
+                temperature=temp
+            )
+
+        # PATH 3: Local Offline
         elif provider == "ollama":
             from langchain_community.chat_models import ChatOllama
             return ChatOllama(
@@ -60,37 +64,26 @@ def get_llm() -> BaseChatModel:
 
 def get_embeddings() -> Embeddings:
     """
-    Returns an Embedding model based on configuration.
-    Crucial: If LLM is Azure, we usually want Azure Embeddings too.
+    Returns an Embedding model.
+    Usually, we stick to Azure Ada-002 (Native) or Offline HuggingFace.
     """
-    # Logic: If specific embedding provider set, use it. 
-    # Otherwise, follow the LLM provider.
-    provider = os.getenv("EMBEDDING_PROVIDER", os.getenv("LLM_PROVIDER", "ollama")).lower()
+    provider = os.getenv("EMBEDDING_PROVIDER", "azure_native").lower()
     
     print(f"🏭 Factory: Initializing Embeddings -> {provider.upper()}")
 
-    if provider == "azure":
+    if provider == "azure_native":
         from langchain_openai import AzureOpenAIEmbeddings
-        
-        deployment = os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT")
-        if not deployment:
-            raise ValueError("❌ Azure Embedding Deployment missing! Check AZURE_OPENAI_EMBEDDING_DEPLOYMENT.")
-
         return AzureOpenAIEmbeddings(
-            azure_deployment=deployment,
-            api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-08-01-preview"),
+            azure_deployment=os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT"),
+            api_version=os.getenv("AZURE_API_VERSION"),
             azure_endpoint=os.getenv("AZURE_API_BASE"),
             api_key=os.getenv("AZURE_API_KEY"),
         )
-
-    elif provider == "openai":
-        from langchain_openai import OpenAIEmbeddings
-        return OpenAIEmbeddings()
-
-    elif provider == "ollama" or provider == "huggingface":
+        
+    elif provider == "huggingface":
         from langchain_community.embeddings import HuggingFaceEmbeddings
-        # Runs 100% offline
         return HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 
     else:
+        # Fallback to Azure Native if unsure, or add more logic here
         raise ValueError(f"❌ Unsupported Embedding Provider: {provider}")
