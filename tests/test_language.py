@@ -159,3 +159,126 @@ def test_rag_pipeline_instantiation(monkeypatch, tmp_path):
         rag = RAGPipeline(persist_directory=str(tmp_path / "chroma"))
         assert rag.llm is mock_llm
         assert rag.embeddings is mock_embeddings
+
+
+# ===========================================================================
+# AgentRunner — unit tests (LLM mocked, no real API calls)
+# ===========================================================================
+
+def _make_mock_executor(output: str = "42"):
+    """Return a MagicMock that behaves like a LangChain AgentExecutor."""
+    from unittest.mock import MagicMock
+    executor = MagicMock()
+    executor.invoke.return_value = {"output": output}
+    return executor
+
+
+def test_agent_runner_import():
+    """AgentRunner and make_tool can be imported from the package."""
+    from tasks.language.agent import AgentRunner, make_tool
+    assert AgentRunner is not None
+    assert make_tool is not None
+
+
+def test_agent_runner_instantiation(monkeypatch):
+    """AgentRunner initialises without real LLM credentials."""
+    from unittest.mock import MagicMock, patch
+
+    mock_llm = MagicMock()
+    mock_llm.__class__.__name__ = "MockLLM"
+    mock_llm.bind_tools.return_value = mock_llm
+
+    with patch("tasks.language.agent.get_llm", return_value=mock_llm), \
+         patch("tasks.language.agent.AgentRunner._build_executor", return_value=MagicMock()):
+        from tasks.language.agent import AgentRunner
+        agent = AgentRunner(system_prompt="Test system prompt.")
+        assert agent.system_prompt == "Test system prompt."
+        assert agent.tools == []
+
+
+def test_agent_runner_run_returns_output(monkeypatch):
+    """run() returns a dict with 'output' and 'chat_history' keys."""
+    from unittest.mock import MagicMock, patch
+
+    mock_llm = MagicMock()
+    mock_llm.__class__.__name__ = "MockLLM"
+    mock_executor = _make_mock_executor(output="Paris")
+
+    with patch("tasks.language.agent.get_llm", return_value=mock_llm), \
+         patch("tasks.language.agent.AgentRunner._build_executor", return_value=mock_executor):
+        from tasks.language.agent import AgentRunner
+        agent = AgentRunner()
+        result = agent.run("What is the capital of France?")
+
+    assert result["output"] == "Paris"
+    assert "chat_history" in result
+    assert len(result["chat_history"]) == 2  # HumanMessage + AIMessage
+
+
+def test_agent_runner_chat_history_grows(monkeypatch):
+    """chat_history accumulates correctly across multiple turns."""
+    from unittest.mock import MagicMock, patch
+
+    mock_llm = MagicMock()
+    mock_llm.__class__.__name__ = "MockLLM"
+    mock_executor = _make_mock_executor(output="Sure!")
+
+    with patch("tasks.language.agent.get_llm", return_value=mock_llm), \
+         patch("tasks.language.agent.AgentRunner._build_executor", return_value=mock_executor):
+        from tasks.language.agent import AgentRunner
+        agent = AgentRunner()
+
+        r1 = agent.run("Hello")
+        r2 = agent.run("How are you?", chat_history=r1["chat_history"])
+
+    # 2 turns → 4 messages (HumanMessage + AIMessage per turn)
+    assert len(r2["chat_history"]) == 4
+
+
+def test_agent_runner_run_batch(monkeypatch):
+    """run_batch() returns one output string per query."""
+    from unittest.mock import MagicMock, patch
+
+    mock_llm = MagicMock()
+    mock_llm.__class__.__name__ = "MockLLM"
+    mock_executor = _make_mock_executor(output="answer")
+
+    with patch("tasks.language.agent.get_llm", return_value=mock_llm), \
+         patch("tasks.language.agent.AgentRunner._build_executor", return_value=mock_executor):
+        from tasks.language.agent import AgentRunner
+        agent = AgentRunner()
+        results = agent.run_batch(["q1", "q2", "q3"])
+
+    assert results == ["answer", "answer", "answer"]
+
+
+def test_agent_runner_add_tool_rebuilds_executor(monkeypatch):
+    """add_tool() appends to the tool list and triggers an executor rebuild."""
+    from unittest.mock import MagicMock, patch
+    from langchain_core.tools import tool
+
+    @tool
+    def dummy_tool(x: str) -> str:
+        """A dummy tool for testing."""
+        return x
+
+    mock_llm = MagicMock()
+    mock_llm.__class__.__name__ = "MockLLM"
+    mock_llm.bind_tools.return_value = mock_llm
+    build_calls = []
+
+    def counting_build(self):
+        mock_exec = _make_mock_executor()
+        build_calls.append(1)
+        return mock_exec
+
+    with patch("tasks.language.agent.get_llm", return_value=mock_llm), \
+         patch.object(__import__("tasks.language.agent", fromlist=["AgentRunner"]).AgentRunner,
+                      "_build_executor", counting_build):
+        from tasks.language.agent import AgentRunner
+        agent = AgentRunner(tools=[])
+        initial_builds = len(build_calls)
+        agent.add_tool(dummy_tool)
+
+    assert len(agent.tools) == 1
+    assert len(build_calls) == initial_builds + 1
