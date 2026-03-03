@@ -91,7 +91,7 @@ async def lifespan(app: FastAPI):
 # ===========================================================================
 
 app = FastAPI(
-    title="AINM 2026 — Competition API",
+    title="AINM 2026 — DNV Competition API",
     description=(
         "Norwegian AI Championship 2026. "
         "Serves predictions for all competition tasks via a unified REST API."
