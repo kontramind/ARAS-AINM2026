@@ -21,6 +21,7 @@ Competition date: **March 19–22, 2026** | Website: [ainm.no/en](https://ainm.n
 | `tasks/language/factory.py` | Returns an LLM (Azure / Ollama / HF) — provider-agnostic | ❌ None |
 | `tasks/language/rag.py` | RAG over **any** document corpus | ❌ None |
 | `tasks/language/classifier.py` | Classifies **any** texts into **any** labels | ❌ None |
+| `tasks/language/agent.py` | LangChain tool-calling agent with multi-turn history + batch mode | ❌ None |
 | `tasks/vision/preprocessing.py` | Loads/resizes/normalizes **any** image (including DICOM, NIfTI) | ❌ None |
 | `tasks/vision/segmentation.py` | Produces binary masks — useful if the vision task is segmentation | ⚠️ Swap if task is classification/detection |
 | `scripts/evaluate.py` | Measures accuracy **and** latency locally before submitting | ❌ None |
@@ -118,7 +119,8 @@ AINM2026/
 │   ├── language/
 │   │   ├── factory.py       # Provider-agnostic LLM + embeddings factory (Azure / Ollama / HF)
 │   │   ├── rag.py           # RAG pipeline (Chroma vector DB + LangChain)
-│   │   └── classifier.py    # Text classifier (TF-IDF → embeddings → zero-shot)
+│   │   ├── classifier.py    # Text classifier (TF-IDF → embeddings → zero-shot)
+│   │   └── agent.py         # AgentRunner: tool-calling agent, multi-turn, run_batch
 │   ├── machine_learning/
 │   │   ├── baseline.py      # Tabular pipeline: model race + auto-selection
 │   │   └── feature_engineering.py  # Imputation, encoding, interaction features
@@ -244,6 +246,50 @@ rag.ingest_texts(documents, metadatas)
 answer = rag.query("What is the triage for cardiac arrest?")
 ```
 
+### Task 2 (or any task) — Agent Orchestration
+
+Use `AgentRunner` when a task benefits from tool-calling, multi-step reasoning,
+or chaining multiple capabilities together.
+
+```python
+from tasks.language import AgentRunner, make_tool
+
+# 1. Define tools as plain decorated functions
+@make_tool
+def lookup_patient_record(patient_id: str) -> str:
+    """Fetch the clinical record for a patient by their ID."""
+    return records_db[patient_id]
+
+@make_tool
+def compute_risk_score(age: int, systolic_bp: float) -> float:
+    """Compute a simple cardiovascular risk score."""
+    return round(age * 0.02 + systolic_bp * 0.001, 3)
+
+# 2. Create the agent — uses the factory LLM (Azure / Ollama / OpenAI-compat)
+agent = AgentRunner(
+    tools=[lookup_patient_record, compute_risk_score],
+    system_prompt="You are a clinical decision support assistant.",
+)
+
+# 3. Single query
+result = agent.run("What is the risk score for patient P-001?")
+print(result["output"])
+
+# 4. Multi-turn conversation
+history = []
+r1 = agent.run("Look up patient P-001.", chat_history=history)
+r2 = agent.run("Is their risk score high?", chat_history=r1["chat_history"])
+
+# 5. Score a whole batch of competition rows (stateless per row)
+answers = agent.run_batch([row["question"] for row in test_data])
+
+# 6. Add a tool discovered on competition day without rebuilding from scratch
+agent.add_tool(some_new_tool)
+```
+
+> `AgentRunner` reuses `factory.py` — no new dependencies, all three LLM
+> providers work without any code changes.
+
 ### Task 3 — Vision / Segmentation
 
 ```python
@@ -285,9 +331,10 @@ models["task3"].load_pretrained("models/task3.pth")
 ## Running Tests
 
 ```bash
-pytest tests/ -v                   # All tests
+pytest tests/ -v                   # All tests (63 total)
 pytest tests/test_api.py -v        # API only
 pytest tests/test_ml.py -v         # ML only
+pytest tests/test_language.py -v   # Language (classifier + RAG + agent)
 pytest tests/test_vision.py -v     # Vision only
 pytest tests/ --cov=tasks --cov=api  # With coverage
 ```
