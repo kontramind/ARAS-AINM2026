@@ -1,6 +1,6 @@
 # AINM 2026 — Norwegian AI Championship DNV GRD Base Repository
 
-Competition date: **March 19–22, 2026** | Website: [ainm.no/en](https://ainm.no/en) | [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+Competition date: **March 19–22, 2026** | Website: [ainm.no/en](https://ainm.no/en) | [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ---
 
