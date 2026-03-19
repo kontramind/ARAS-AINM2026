@@ -5,11 +5,13 @@
 #   default  → API only (uses cloud LLM or pre-loaded models)
 #   local    → API + Ollama (fully offline, no cloud dependency)
 #   dev      → API with hot-reload (development mode)
+#   tunnel   → API + ngrok HTTPS tunnel (for competition submission)
 #
 # Usage:
 #   docker compose up                          # default (cloud mode)
 #   docker compose --profile local up          # full offline stack
 #   docker compose --profile dev up            # development
+#   docker compose --profile tunnel up         # expose via ngrok (set NGROK_AUTHTOKEN in .env)
 #   docker compose --profile local --profile dev up  # offline dev
 # ============================================================
 
@@ -88,6 +90,23 @@ services:
       timeout: 10s
       retries: 5
       start_period: 60s
+
+  # ---- ngrok HTTPS Tunnel (competition submission) ----
+  # Exposes port 8000 as a public HTTPS URL — submit that URL to ainm.no
+  # Requires: NGROK_AUTHTOKEN in .env  (free at https://dashboard.ngrok.com)
+  # After start, run: docker logs ainm2026_ngrok 2>&1 | grep "url="
+  ngrok:
+    image: ngrok/ngrok:latest
+    container_name: ainm2026_ngrok
+    command: http api:8000 --log=stdout
+    environment:
+      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles:
+      - tunnel
 
 volumes:
   # Named volume so Ollama models survive docker compose down

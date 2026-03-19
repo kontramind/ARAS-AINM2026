@@ -136,3 +136,39 @@ class Task3Output(BaseModel):
         description="List of {x, y, w, h} bounding boxes (detection tasks)"
     )
     meta: Optional[PredictionMetadata] = None
+
+
+# ===========================================================================
+# TRIPLETEX — AI Accounting Agent
+# ===========================================================================
+
+class TripletexFileAttachment(BaseModel):
+    filename: str
+    content_base64: str
+    mime_type: str
+
+
+class TripletexCredentials(BaseModel):
+    base_url: str
+    session_token: str
+
+
+class TripletexSolveInput(BaseModel):
+    prompt: str = Field(..., description="Accounting task prompt (any of 7 languages)")
+    files: List[TripletexFileAttachment] = Field(default=[], description="Optional PDF/image attachments")
+    tripletex_credentials: TripletexCredentials
+
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "prompt": "Opprett en ansatt med navn Ola Nordmann, ola@example.org.",
+            "files": [],
+            "tripletex_credentials": {
+                "base_url": "https://tx-proxy.ainm.no/v2",
+                "session_token": "abc123"
+            }
+        }
+    })
+
+
+class TripletexSolveOutput(BaseModel):
+    status: str = "completed"
