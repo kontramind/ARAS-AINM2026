@@ -192,15 +192,20 @@ def build_tools(client: TripletexClient) -> list:
         # Always request id at minimum for efficient follow-up calls
         if "fields" not in params:
             params["fields"] = "id,name"
+        _log(f"  🔍 GET {endpoint} params={json.dumps(params, ensure_ascii=False)[:300]}")
         try:
             result = client.get(endpoint, params=params)
             # Ensure we always return a list
             if not isinstance(result, list):
                 result = [result]
+            _log(f"  📥 Search {endpoint}: {len(result)} result(s)")
             return json.dumps(result, ensure_ascii=False)
         except requests.HTTPError as e:
-            return json.dumps({"error": str(e), "response": getattr(e.response, 'text', str(e)) if e.response is not None else str(e)})
+            error_text = getattr(e.response, 'text', str(e)) if e.response is not None else str(e)
+            _log(f"  ❗ GET {endpoint} failed: {e} -> {error_text[:300]}")
+            return json.dumps({"error": str(e), "response": error_text})
         except Exception as e:
+            _log(f"  ❗ GET {endpoint} error: {e}")
             return json.dumps({"error": str(e)})
 
     @make_tool
@@ -368,24 +373,31 @@ You understand prompts in Norwegian, English, Spanish, Portuguese, Nynorsk, Germ
 - PUT: include `id` in body matching resource_id
 - References: `{"id": <known_id>}`, e.g. `"customer": {"id": 42}`
 - Use `fields` param to limit response size
+- CRITICAL: Numbers in parentheses in the prompt (e.g. "Nettverksteneste (3237)") are PRODUCT NUMBERS, NOT product IDs! You MUST search /product?number=3237 to get the real product ID before using it.
+- VAT MATH: When creating products with 25% VAT, priceIncludingVatCurrency = priceExcludingVatCurrency × 1.25. NEVER set them to the same value.
+- PAYMENT: When registering full payment, pay the TOTAL amount in ONE call. Do NOT split into multiple payment calls.
 
 ## Endpoints & Required Fields
-- /employee POST: firstName, lastName, userType (string enum: "EXTENDED"|"STANDARD"|"NO_ACCESS"), department: {"id": <id>} (REQUIRED — search /department first). ALWAYS use "EXTENDED" unless told otherwise. Email is required for EXTENDED/STANDARD. Do NOT include dateOfBirth or startDate — they cause 422.
+- /employee POST: firstName, lastName, userType (string enum: "EXTENDED"|"STANDARD"|"NO_ACCESS"), department: {"id": <id>} (REQUIRED — search /department first). ALWAYS use "EXTENDED" unless told otherwise. Email is required for EXTENDED/STANDARD. Optional: dateOfBirth (YYYY-MM-DD), startDate (YYYY-MM-DD) — include these if the prompt mentions them.
 - /customer POST: name, email, organizationNumber, phoneNumber, isPrivateIndividual (bool), invoicesDueIn (int), invoicesDueInType (enum: DAYS|MONTHS|RECURRING_DAY_OF_MONTH), language (enum: NO|EN)
 - /product POST: name, number (string, unique code), costExcludingVatCurrency (number), priceExcludingVatCurrency, priceIncludingVatCurrency, vatType: {"id": X}, department: {"id": X}
 - /department POST: name, departmentNumber (STRING not int), departmentManager: {"id": <employee_id>}
 - /order POST: customer: {"id": X}, orderDate (YYYY-MM-DD), deliveryDate (YYYY-MM-DD, REQUIRED!), orderLines: [{"description": "text", "count": 1, "unitCostCurrency": 27900}] — use description+unitCostCurrency for ad-hoc items, OR product: {"id": X}. Optional: invoiceComment, currency: {"id": X}
 - /invoice POST: customer: {"id": X}, invoiceDate, invoiceDueDate, orders: [{"id": X}] (must create order FIRST). Optional: comment, kid (KID number)
-- /travelExpense POST: employee: {"id": X}, title (string). That's ALL — do NOT send date, departureDateTime, returnDateTime, description, or perDiemCompensation. Optional: project: {"id": X}, department: {"id": X}
+- /travelExpense POST: employee: {"id": X}, title (string). Do NOT send date, departureDateTime, returnDateTime, description, or perDiemCompensation in the POST body. Optional: project: {"id": X}, department: {"id": X}
+- /travelExpense/cost POST: travelExpense: {"id": X}, date (YYYY-MM-DD), description (string), rateCurrency (number — the cost amount), paymentType: {"id": <paymentTypeId>}, currency: {"id": 1} (1=NOK), category: {"id": <category_id>}. Use this to add expenses like flights, taxis, hotels etc.
+- /travelExpense/perDiemCompensation POST: travelExpense: {"id": X}, dateFrom (YYYY-MM-DD), dateTo (YYYY-MM-DD), ratePerDay (number), count (number of days), isLunchDeduction (bool, false), isAccommodationProvided (bool, false). Use this to add per diem/daily allowance.
+- /invoice/paymentType GET: search with fields=id,description (NOT 'name' — it does not exist on PaymentTypeDTO)
 - /project POST: name, projectManager: {"id": <employee_id>}, department: {"id": X}, startDate (YYYY-MM-DD). Optional: customer: {"id": X}, endDate, description, isFixedPrice (bool), fixedprice (number)
 - /supplier POST: name, email, organizationNumber, phoneNumber, supplierNumber (int), bankAccounts (array of strings)
 - /contact POST: firstName, lastName, email, phoneNumberMobile, customer: {"id": X} OR supplier: {"id": X}
 - /ledger/account GET: search with ?number=<acct_number>&fields=id,number,name
-- /ledger/voucher POST: date, description, postings (array). Each posting: {"row": <N starting from 1>, "account": {"id": <acct_id>}, "amount": <positive=debit, negative=credit>, "description": "text"}. For AR/AP postings add "customer": {"id": X} or "supplier": {"id": X}. Amounts MUST sum to 0.
-- /ledger/voucherType GET: id, name — e.g. "Betaling", "Utgående faktura"
+- /ledger/voucher POST: date (YYYY-MM-DD), description, postings (array). Each posting: {"row": <N starting from 1>, "account": {"id": <acct_id>}, "amountGross": <positive=debit, negative=credit>, "description": "text"}. For AP postings add "supplier": {"id": X}. For AR postings add "customer": {"id": X}. All amountGross values MUST sum to 0. Use amountGross (not amount) for the posting value.
+- /ledger/voucherType GET: search with fields=id,name — e.g. "Betaling", "Utgående faktura", "Inngående faktura"
+- IMPORTANT: POST /supplierInvoice does NOT EXIST. Supplier invoices are READ-ONLY. To RECORD a supplier invoice, use POST /ledger/voucher with: debit the expense account, debit the input VAT account (2710), credit the supplier AP account (2400) with supplier ref. Include voucherType for "Inngående faktura".
 
 ## Action Endpoints (use action_endpoint tool — PUT with query params)
-- /invoice/{id}/:payment — params: paymentDate (YYYY-MM-DD), paymentTypeId (int), paidAmount (amount in payment type currency). Get paymentTypeId from /invoice/paymentType.
+- /invoice/{id}/:payment — params: paymentDate (YYYY-MM-DD), paymentTypeId (int), paidAmount (amount in payment type currency). Get paymentTypeId from /invoice/paymentType (use fields=id,description).
 - /order/{id}/:invoice — params: invoiceDate (YYYY-MM-DD), sendToCustomer (bool, default true). Creates invoice from order.
 - /invoice/{id}/:send — params: sendType (EMAIL|EHF|PAPER|MANUAL), overrideEmailAddress (optional)
 - /invoice/{id}/:createCreditNote — params: date (YYYY-MM-DD), comment, sendToCustomer (bool)
@@ -418,18 +430,28 @@ If NO admin keyword is present, STILL use userType="EXTENDED" (default).
 - Multiple creates → call create_resource multiple times IN ONE TURN
 
 ### Tier 2 — Multi-step workflows
-- Create & send invoice → 1) find/create customer, 2) create order with orderDate, deliveryDate, orderLines, 3) action_endpoint "/order/{order_id}/:invoice" with params {"invoiceDate": "YYYY-MM-DD"}, 4) optionally action_endpoint "/invoice/{id}/:send" with sendType
-- Register invoice payment → 1) search /invoice (needs invoiceDateFrom+invoiceDateTo), 2) search /invoice/paymentType for paymentTypeId, 3) action_endpoint "/invoice/{id}/:payment" with paymentDate, paymentTypeId, paidAmount
+- Create order → invoice → payment → 1) search /customer by organizationNumber, 2) search /product?number=XXXX for EACH product number in the prompt to get real IDs, 3) create order with product: {"id": <real_id>} in orderLines, 4) action_endpoint "/order/{order_id}/:invoice", 5) search /invoice/paymentType to get paymentTypeId, 6) action_endpoint "/invoice/{id}/:payment" with TOTAL amount in ONE call
+- Create & send invoice → same as above + action_endpoint "/invoice/{id}/:send" with sendType
+- Register invoice payment → 1) search /invoice (needs invoiceDateFrom+invoiceDateTo), 2) search /invoice/paymentType for paymentTypeId, 3) action_endpoint "/invoice/{id}/:payment" with paymentDate, paymentTypeId, paidAmount (TOTAL in ONE call)
 - Credit note → 1) find invoice, 2) action_endpoint "/invoice/{id}/:createCreditNote" with date, comment, sendToCustomer
-- Travel expense → search /employee → create_resource /travelExpense with employee.id + title. Only 2 fields!
+- Travel expense (simple) → search /employee → create_resource /travelExpense with employee.id + title
+- Travel expense (with costs) → 1) search /employee, 2) create_resource /travelExpense with employee.id + title, 3) for EACH expense mentioned: create_resource /travelExpense/cost with travelExpense.id + description + rateCurrency + date, 4) if per diem/daily allowance mentioned: create_resource /travelExpense/perDiemCompensation with travelExpense.id + dateFrom + dateTo + ratePerDay + count
 - Delete travel expense → search /travelExpense → delete_resource
 - Create project → search /employee AND /department in parallel → create_resource /project with name, projectManager.id, department.id, startDate
+- Record supplier invoice (leverandørfaktura) → NEVER use POST /supplierInvoice (it doesn't exist!). Instead:
+  1) search /supplier by organizationNumber AND search /ledger/account for expense account (e.g. 7100) AND search /ledger/account for input VAT account (2710) AND search /ledger/account for AP account (2400) — ALL IN PARALLEL
+  2) calculate: netAmount = totalInclVat / 1.25, vatAmount = totalInclVat - netAmount
+  3) create_resource /ledger/voucher with postings:
+     row 1: debit expense account (amountGross = +netAmount, description)
+     row 2: debit input VAT account 2710 (amountGross = +vatAmount)
+     row 3: credit AP account 2400 (amountGross = -totalInclVat, supplier: {"id": X})
+     All amountGross values MUST sum to 0.
 - Supplier invoice approval + payment → 1) search /supplierInvoice, 2) action_endpoint "/supplierInvoice/{id}/:approve", 3) action_endpoint "/supplierInvoice/{id}/:addPayment" with paymentType, amount, paymentDate
 - Delete → find resource → delete_resource
 - Update → find resource → update_resource with id in body
 
 ### Tier 3 — Complex scenarios
-- Ledger voucher → search /ledger/account by number → create_resource /ledger/voucher with date, description, postings (row, account.id, amount, customer/supplier ref if AR/AP)
+- Ledger voucher → search /ledger/account by number → create_resource /ledger/voucher with date, description, postings (row, account.id, amountGross, customer/supplier ref if AR/AP)
 - Reverse ledger entry → 1) find voucher, 2) action_endpoint "/ledger/voucher/{id}/:reverse" with date, 3) create corrected voucher
 - Bank reconciliation → parse CSV file → search /ledger/account once for all needed accounts → batch create /ledger/voucher entries
 
