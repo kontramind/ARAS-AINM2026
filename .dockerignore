@@ -1,0 +1,13 @@
+.venv
+.git
+__pycache__
+*.pyc
+.pytest_cache
+Research
+logs
+data
+models
+*.egg-info
+.claude
+tasks/tripletex/openapi*.json
+tests

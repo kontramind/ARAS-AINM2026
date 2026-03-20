@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.embeddings import Embeddings
 
-load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
 
 _llm_cache: BaseChatModel | None = None
 
@@ -61,13 +61,12 @@ def get_llm() -> BaseChatModel:
                 temperature=temp
             )
 
-        # PATH 3: Local Offline
-        elif provider == "ollama":
-            from langchain_community.chat_models import ChatOllama
-            _llm_cache = ChatOllama(
-                model=os.getenv("OLLAMA_MODEL", "llama3"),
-                base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
-                temperature=temp
+        # PATH 3: Google Gemini (native on GCP — no API key needed with SA)
+        elif provider == "google_genai":
+            from langchain_google_genai import ChatGoogleGenerativeAI
+            _llm_cache = ChatGoogleGenerativeAI(
+                model=os.getenv("GOOGLE_MODEL", "gemini-2.5-flash"),
+                temperature=temp,
             )
 
         else:
@@ -75,7 +74,7 @@ def get_llm() -> BaseChatModel:
 
     except ImportError as e:
         print(f"❌ Dependency Error: {e}")
-        sys.exit(1)
+        raise
 
     return _llm_cache
 

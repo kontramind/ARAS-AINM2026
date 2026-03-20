@@ -220,7 +220,7 @@ class TestSandboxRoundTrips:
 
         fetched = client.get(f"/employee/{employee_id}", params={"fields": "id,firstName,lastName,email"})
         assert fetched["firstName"] == "Test"
-        assert fetched["lastName"] == "Employee"
+        assert fetched["lastName"] == f"Employee{unique}"
 
     def test_create_customer(self, sandbox_credentials):
         client = TripletexClient(

@@ -121,7 +121,20 @@ class AgentRunner:
 
         # LangChain 1.x returns {"messages": [...]} — last message is the answer
         output_msg = result["messages"][-1]
-        output: str = output_msg.content if hasattr(output_msg, "content") else str(output_msg)
+        raw_content = output_msg.content if hasattr(output_msg, "content") else str(output_msg)
+
+        # Handle Gemini thinking models — content may be a list of blocks
+        # (e.g. [{"type": "thinking", ...}, {"type": "text", "text": "..."}])
+        if isinstance(raw_content, list):
+            text_parts = []
+            for block in raw_content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    text_parts.append(block.get("text", ""))
+                elif isinstance(block, str):
+                    text_parts.append(block)
+            output = "\n".join(text_parts) if text_parts else str(raw_content)
+        else:
+            output = str(raw_content)
 
         history.append(HumanMessage(content=query))
         history.append(AIMessage(content=output))

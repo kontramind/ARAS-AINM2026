@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+from datetime import datetime
 from typing import Any, Optional
 
 import requests
@@ -35,6 +37,22 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 from tasks.language.agent import AgentRunner, make_tool
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# STRUCTURED JSON LOGGER — Cloud Logging auto-parses JSON lines from stdout
+# ---------------------------------------------------------------------------
+
+def _log(msg: str, severity: str = "INFO", **extra) -> None:
+    """Emit a structured JSON log line to stdout (picked up by Cloud Logging)."""
+    import sys
+    entry = {
+        "severity": severity,
+        "message": msg,
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "component": "tripletex-agent",
+    }
+    entry.update(extra)
+    print(json.dumps(entry, ensure_ascii=False), flush=True, file=sys.stdout)
 
 
 # ===========================================================================
@@ -115,6 +133,15 @@ class TripletexClient:
             return data["value"]
         return data
 
+    def put_action(self, endpoint: str, params: dict | None = None) -> Any:
+        """PUT with query params (for Tripletex action endpoints like /:payment, /:invoice)."""
+        resp = self._session.put(self._url(endpoint), params=params or {}, json={})
+        resp.raise_for_status()
+        data = resp.json()
+        if isinstance(data, dict) and "value" in data:
+            return data["value"]
+        return data
+
     def delete(self, endpoint: str, resource_id: int | str) -> bool:
         resp = self._session.delete(self._url(f"{endpoint}/{resource_id}"))
         resp.raise_for_status()
@@ -173,6 +200,8 @@ def build_tools(client: TripletexClient) -> list:
             return json.dumps(result, ensure_ascii=False)
         except requests.HTTPError as e:
             return json.dumps({"error": str(e), "response": getattr(e.response, 'text', str(e)) if e.response is not None else str(e)})
+        except Exception as e:
+            return json.dumps({"error": str(e)})
 
     @make_tool
     def get_by_id(endpoint: str, resource_id: int, fields: Optional[str] = None) -> str:
@@ -195,6 +224,8 @@ def build_tools(client: TripletexClient) -> list:
             return json.dumps(result, ensure_ascii=False)
         except requests.HTTPError as e:
             return json.dumps({"error": str(e), "response": getattr(e.response, 'text', str(e)) if e.response is not None else str(e)})
+        except Exception as e:
+            return json.dumps({"error": str(e)})
 
     @make_tool
     def create_resource(endpoint: str, body: str) -> str:
@@ -207,7 +238,7 @@ def build_tools(client: TripletexClient) -> list:
                       NEVER include an 'id' field — the API generates it.
                       When referencing another resource, use {"id": <known_id>} as the value.
                       Examples:
-                        Employee: '{"firstName":"Ola","lastName":"Nordmann","email":"ola@ex.org","userType":1,"department":{"id":123}}'
+                        Employee: '{"firstName":"Ola","lastName":"Nordmann","email":"ola@ex.org","userType":"EXTENDED","department":{"id":123}}'
                         Customer: '{"name":"Acme AS","email":"acme@ex.org"}'
                         Invoice:  '{"customer":{"id":123},"invoiceDate":"2024-01-15"}'
 
@@ -216,9 +247,9 @@ def build_tools(client: TripletexClient) -> list:
         """
         try:
             parsed = _parse_json_lenient(body)
-            print(f"  📤 POST {endpoint} body={json.dumps(parsed, ensure_ascii=False)[:300]}")
+            _log(f"  📤 POST {endpoint} body={json.dumps(parsed, ensure_ascii=False)[:300]}")
             result = client.post(endpoint, parsed)
-            print(f"  📥 Created: id={result.get('id', '?')}")
+            _log(f"  📥 Created: id={result.get('id', '?')}")
             return json.dumps(result, ensure_ascii=False)
         except requests.HTTPError as e:
             error_text = ""
@@ -227,8 +258,11 @@ def build_tools(client: TripletexClient) -> list:
                     error_text = e.response.text
                 except Exception:
                     error_text = f"status {e.response.status_code}"
-            print(f"  ❗ POST {endpoint} failed: {e} -> {error_text[:500]}")
+            _log(f"  ❗ POST {endpoint} failed: {e} -> {error_text[:500]}")
             return json.dumps({"error": str(e), "response": error_text or str(e)})
+        except Exception as e:
+            _log(f"  ❗ POST {endpoint} error: {e}")
+            return json.dumps({"error": str(e)})
 
     @make_tool
     def update_resource(endpoint: str, resource_id: int, body: str) -> str:
@@ -251,6 +285,8 @@ def build_tools(client: TripletexClient) -> list:
             return json.dumps(result, ensure_ascii=False)
         except requests.HTTPError as e:
             return json.dumps({"error": str(e), "response": getattr(e.response, 'text', str(e)) if e.response is not None else str(e)})
+        except Exception as e:
+            return json.dumps({"error": str(e)})
 
     @make_tool
     def delete_resource(endpoint: str, resource_id: int) -> str:
@@ -269,8 +305,46 @@ def build_tools(client: TripletexClient) -> list:
             return json.dumps({"deleted": True, "id": resource_id})
         except requests.HTTPError as e:
             return json.dumps({"error": str(e), "response": getattr(e.response, 'text', str(e)) if e.response is not None else str(e)})
+        except Exception as e:
+            return json.dumps({"error": str(e)})
 
-    return [search_resource, get_by_id, create_resource, update_resource, delete_resource]
+    @make_tool
+    def action_endpoint(endpoint: str, params: Optional[str] = None) -> str:
+        """
+        Call a Tripletex action endpoint (PUT with query parameters).
+        Used for special operations like registering payments or creating invoices from orders.
+
+        Args:
+            endpoint: Full action path including resource ID, e.g.
+                      '/invoice/12345/:payment' or '/order/67890/:invoice'.
+            params:   Optional JSON string of query parameters.
+                      Examples:
+                        For invoice payment: '{"paymentDate": "2026-03-20", "paymentTypeId": 32910816, "paidAmount": 37500}'
+                        For order→invoice:  '{"invoiceDate": "2026-03-20"}'
+
+        Returns:
+            JSON object of the result.
+        """
+        try:
+            parsed_params = _parse_json_lenient(params) if params else {}
+            _log(f"  🔧 PUT action {endpoint} params={json.dumps(parsed_params, ensure_ascii=False)[:300]}")
+            result = client.put_action(endpoint, params=parsed_params)
+            _log(f"  📥 Action result: id={result.get('id', '?') if isinstance(result, dict) else '?'}")
+            return json.dumps(result, ensure_ascii=False)
+        except requests.HTTPError as e:
+            error_text = ""
+            if e.response is not None:
+                try:
+                    error_text = e.response.text
+                except Exception:
+                    error_text = f"status {e.response.status_code}"
+            _log(f"  ❗ PUT action {endpoint} failed: {e} -> {error_text[:500]}")
+            return json.dumps({"error": str(e), "response": error_text or str(e)})
+        except Exception as e:
+            _log(f"  ❗ PUT action {endpoint} error: {e}")
+            return json.dumps({"error": str(e)})
+
+    return [search_resource, get_by_id, create_resource, update_resource, delete_resource, action_endpoint]
 
 
 # ===========================================================================
@@ -296,31 +370,79 @@ You understand prompts in Norwegian, English, Spanish, Portuguese, Nynorsk, Germ
 - Use `fields` param to limit response size
 
 ## Endpoints & Required Fields
-- /employee POST: firstName, lastName, userType (2=no-login, 1=login requires email), department: {"id": <id>} (REQUIRED — search /department first). Do NOT include dateOfBirth or startDate in POST — they cause 422.
-- /customer POST: name (required), email, organizationNumber
-- /product POST: name, number (unique string code), costExcludingVatCurrency (number, price excl VAT)
-- /department POST: name, departmentNumber (unique integer)
-- /order POST: customer: {"id": X}, orderDate (YYYY-MM-DD), deliveryDate (YYYY-MM-DD, REQUIRED!), orderLines: [{"description": "text", "count": 1, "unitCostCurrency": 27900}] — use description+unitCostCurrency for ad-hoc items, OR product: {"id": X} for existing products
-- /invoice POST: customer: {"id": X}, invoiceDate (YYYY-MM-DD), invoiceDueDate (YYYY-MM-DD, REQUIRED!), orders: [{"id": X}] (REQUIRED — must create order FIRST, then reference it)
-- /travelExpense POST: employee: {"id": X}, description, date (YYYY-MM-DD)
-- /project POST: name, customer: {"id": X}, department: {"id": X}
-- /ledger/account GET only: number, name
-- /ledger/posting GET only: date, amount, account
-- /ledger/voucher POST/DELETE: postings[{account: {"id": X}, amount}]
+- /employee POST: firstName, lastName, userType (string enum: "EXTENDED"|"STANDARD"|"NO_ACCESS"), department: {"id": <id>} (REQUIRED — search /department first). ALWAYS use "EXTENDED" unless told otherwise. Email is required for EXTENDED/STANDARD. Do NOT include dateOfBirth or startDate — they cause 422.
+- /customer POST: name, email, organizationNumber, phoneNumber, isPrivateIndividual (bool), invoicesDueIn (int), invoicesDueInType (enum: DAYS|MONTHS|RECURRING_DAY_OF_MONTH), language (enum: NO|EN)
+- /product POST: name, number (string, unique code), costExcludingVatCurrency (number), priceExcludingVatCurrency, priceIncludingVatCurrency, vatType: {"id": X}, department: {"id": X}
+- /department POST: name, departmentNumber (STRING not int), departmentManager: {"id": <employee_id>}
+- /order POST: customer: {"id": X}, orderDate (YYYY-MM-DD), deliveryDate (YYYY-MM-DD, REQUIRED!), orderLines: [{"description": "text", "count": 1, "unitCostCurrency": 27900}] — use description+unitCostCurrency for ad-hoc items, OR product: {"id": X}. Optional: invoiceComment, currency: {"id": X}
+- /invoice POST: customer: {"id": X}, invoiceDate, invoiceDueDate, orders: [{"id": X}] (must create order FIRST). Optional: comment, kid (KID number)
+- /travelExpense POST: employee: {"id": X}, title (string). That's ALL — do NOT send date, departureDateTime, returnDateTime, description, or perDiemCompensation. Optional: project: {"id": X}, department: {"id": X}
+- /project POST: name, projectManager: {"id": <employee_id>}, department: {"id": X}, startDate (YYYY-MM-DD). Optional: customer: {"id": X}, endDate, description, isFixedPrice (bool), fixedprice (number)
+- /supplier POST: name, email, organizationNumber, phoneNumber, supplierNumber (int), bankAccounts (array of strings)
+- /contact POST: firstName, lastName, email, phoneNumberMobile, customer: {"id": X} OR supplier: {"id": X}
+- /ledger/account GET: search with ?number=<acct_number>&fields=id,number,name
+- /ledger/voucher POST: date, description, postings (array). Each posting: {"row": <N starting from 1>, "account": {"id": <acct_id>}, "amount": <positive=debit, negative=credit>, "description": "text"}. For AR/AP postings add "customer": {"id": X} or "supplier": {"id": X}. Amounts MUST sum to 0.
+- /ledger/voucherType GET: id, name — e.g. "Betaling", "Utgående faktura"
+
+## Action Endpoints (use action_endpoint tool — PUT with query params)
+- /invoice/{id}/:payment — params: paymentDate (YYYY-MM-DD), paymentTypeId (int), paidAmount (amount in payment type currency). Get paymentTypeId from /invoice/paymentType.
+- /order/{id}/:invoice — params: invoiceDate (YYYY-MM-DD), sendToCustomer (bool, default true). Creates invoice from order.
+- /invoice/{id}/:send — params: sendType (EMAIL|EHF|PAPER|MANUAL), overrideEmailAddress (optional)
+- /invoice/{id}/:createCreditNote — params: date (YYYY-MM-DD), comment, sendToCustomer (bool)
+- /supplierInvoice/{id}/:addPayment — params: paymentType (int, 0=last used), amount, paymentDate
+- /supplierInvoice/{id}/:approve — params: comment (optional)
+- /travelExpense/:deliver — params: id (comma-separated IDs)
+- /travelExpense/:approve — params: id (comma-separated IDs)
+- /ledger/voucher/{id}/:reverse — params: date (YYYY-MM-DD)
+
+## Admin Role Detection (CRITICAL — worth 5/10 points on employee tasks!)
+When the prompt mentions any of these keywords, set userType="EXTENDED":
+- Norwegian: "administrator", "admin-tilgang", "full tilgang", "administratortilgang"
+- Nynorsk: "administrator", "administratortilgang"
+- English: "administrator", "admin access", "full access"
+- Spanish: "administrador", "acceso de administrador"
+- Portuguese: "administrador", "acesso de administrador"
+- German: "Administrator", "Administratorzugang"
+- French: "administrateur", "accès administrateur"
+If NO admin keyword is present, STILL use userType="EXTENDED" (default).
 
 ## Task Patterns (follow these exactly)
-- Create employee → FIRST search_resource /department to get dept ID, THEN create_resource /employee with userType=2 + department.id. If email is given, use userType=1.
-- Create customer → create_resource /customer directly
-- Create department → create_resource /department directly with name + departmentNumber
+
+### Tier 1 — Simple creates
+- Create employee → search /department to get dept ID → create_resource /employee with firstName, lastName, email, userType="EXTENDED", department.id
+- Create customer → create_resource /customer directly with name (+ optional fields). NO need to search first.
+- Create supplier → create_resource /supplier directly with name (+ optional fields). NO need to search first.
+- Create department → create_resource /department with name + departmentNumber (string!)
+- Create product → create_resource /product with name, number. NO need to search first.
+- Create contact → find customer/supplier → create_resource /contact with firstName, lastName, customer/supplier ref
 - Multiple creates → call create_resource multiple times IN ONE TURN
-- Create invoice → Step 1: find/create customer. Step 2: create order with orderDate, deliveryDate, and orderLines (use description+unitCostCurrency for line items). Step 3: create invoice with invoiceDate, invoiceDueDate, and orders[{id}].
-- Travel expense → find employee, create travelExpense with employee.id + description + date
-- Delete resource → find it first, then delete_resource
-- Update resource → find it first, then update_resource with id in body
+
+### Tier 2 — Multi-step workflows
+- Create & send invoice → 1) find/create customer, 2) create order with orderDate, deliveryDate, orderLines, 3) action_endpoint "/order/{order_id}/:invoice" with params {"invoiceDate": "YYYY-MM-DD"}, 4) optionally action_endpoint "/invoice/{id}/:send" with sendType
+- Register invoice payment → 1) search /invoice (needs invoiceDateFrom+invoiceDateTo), 2) search /invoice/paymentType for paymentTypeId, 3) action_endpoint "/invoice/{id}/:payment" with paymentDate, paymentTypeId, paidAmount
+- Credit note → 1) find invoice, 2) action_endpoint "/invoice/{id}/:createCreditNote" with date, comment, sendToCustomer
+- Travel expense → search /employee → create_resource /travelExpense with employee.id + title. Only 2 fields!
+- Delete travel expense → search /travelExpense → delete_resource
+- Create project → search /employee AND /department in parallel → create_resource /project with name, projectManager.id, department.id, startDate
+- Supplier invoice approval + payment → 1) search /supplierInvoice, 2) action_endpoint "/supplierInvoice/{id}/:approve", 3) action_endpoint "/supplierInvoice/{id}/:addPayment" with paymentType, amount, paymentDate
+- Delete → find resource → delete_resource
+- Update → find resource → update_resource with id in body
+
+### Tier 3 — Complex scenarios
+- Ledger voucher → search /ledger/account by number → create_resource /ledger/voucher with date, description, postings (row, account.id, amount, customer/supplier ref if AR/AP)
+- Reverse ledger entry → 1) find voucher, 2) action_endpoint "/ledger/voucher/{id}/:reverse" with date, 3) create corrected voucher
+- Bank reconciliation → parse CSV file → search /ledger/account once for all needed accounts → batch create /ledger/voucher entries
+
+## Efficiency Rules (CRITICAL — affects up to ×2 bonus)
+- Do NOT search before creating customers, suppliers, or products — sandbox starts empty, no duplicates possible.
+- The POST response contains the created ID — use it directly, never re-fetch.
+- Fetch multiple prerequisites (employee + department) IN PARALLEL in one turn.
+- Every 4xx error hurts your efficiency score. Get fields right the first time.
 
 ## Error Recovery
-- 422 → read validationMessages, fix the field, retry once
+- 422 → read validationMessages, fix the field, retry ONCE only
 - 409 → resource exists, search for it instead
+- If a field "does not exist in the object" → remove that field and retry
 
 ## REMEMBER: Act immediately. Never ask questions. Search for any missing info. Complete the task in minimum tool calls.
 """
@@ -449,27 +571,43 @@ def solve(request: SolveRequest) -> SolveResponse:
     agent = AgentRunner(
         tools=tools,
         system_prompt=SYSTEM_PROMPT,
-        max_iterations=15,
+        max_iterations=25,
         verbose=True,
     )
 
     file_context = _build_file_context(request.files)
 
-    # Build the full prompt: task + file content
-    sections = [request.prompt]
+    # Planning step — produces an explicit execution plan to guide the agent
+    file_summary = "none"
+    if request.files:
+        file_summary = ", ".join(f.filename for f in request.files)
+    plan = _build_execution_plan(request.prompt, file_summary)
+    if plan:
+        _log(f"📝 Plan:\n{plan}")
+
+    # Build the full prompt: plan + task + file content
+    sections = []
+    if plan:
+        sections.append(plan)
+    sections.append(f"## Task\n{request.prompt}")
     if file_context:
         sections.append(file_context)
 
     full_prompt = "\n".join(sections)
 
-    print(f"📋 Task: {request.prompt[:200]}")
+    _log("TASK_START", task_prompt=request.prompt[:500],
+         files=[f.filename for f in request.files],
+         base_url=request.tripletex_credentials.base_url,
+         has_plan=bool(plan))
     try:
         result = agent.run(full_prompt)
         elapsed = (time.perf_counter() - t0) * 1000
-        print(f"✅ Agent completed in {elapsed:.0f}ms. Output: {result['output'][:200]}")
+        _log("TASK_COMPLETE", elapsed_ms=round(elapsed),
+             output=result["output"][:500])
     except Exception as exc:
+        import traceback
         elapsed = (time.perf_counter() - t0) * 1000
-        print(f"❌ Agent failed in {elapsed:.0f}ms: {exc}")
-        logger.error("Agent execution failed: %s", exc, exc_info=True)
+        _log("TASK_FAILED", severity="ERROR", elapsed_ms=round(elapsed),
+             error=str(exc), traceback=traceback.format_exc())
 
     return SolveResponse(status="completed")
