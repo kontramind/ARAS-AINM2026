@@ -1,0 +1,43 @@
+# ── Main branch: only README.md, LICENSE, .gitignore are tracked ──
+# Ignore task-branch artifacts that exist in the working tree
+.env.example
+.python-version
+Dockerfile
+docker-compose.yml
+hello.py
+pyproject.toml
+api/
+logs/
+notebooks/
+Research/
+scripts/
+tasks/
+tests/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.env
+
+# uv / Environment
+uv.lock
+
+# Data & Models
+data/
+models/
+*.csv
+*.json
+*.pt
+*.bin
+*.safetensors
+*.gguf
+
+# Jupyter
+.ipynb_checkpoints
+
+# Temp files
+tmp/
+*.log
+*.bak
+*.tmp
