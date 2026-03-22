@@ -756,10 +756,11 @@ a. /invoice/paymentType?fields=id,description
 b. /invoice?invoiceDateFrom=2020-01-01&invoiceDateTo=2030-12-31&fields=id,amount,invoiceDate,invoiceNumber,customer(id,name)&count=200
 c. /supplierInvoice?invoiceDateFrom=2020-01-01&invoiceDateTo=2030-12-31&fields=id,amount,invoiceNumber,supplier(id,name)&count=200
 d. /ledger/account?number=1920&fields=id,number,name (bank account)
-e. /ledger/account?number=7700&fields=id,number,name (other operating costs)
+e. /ledger/account?number=2400&fields=id,number,name (accounts payable — for supplier payments!)
 f. /ledger/account?number=8040&fields=id,number,name (interest income)
 g. /ledger/account?number=7770&fields=id,number,name (bank fees)
 h. /ledger/account?number=2920&fields=id,number,name (tax)
+i. /supplier?fields=id,name&count=200 (to match supplier names from CSV)
 
 ### Step 2: Parse the CSV file
 The CSV uses semicolons (;) as separator. Columns: Dato;Forklaring;Inn;Ut;Saldo
@@ -785,11 +786,14 @@ For EACH row, determine the type and take action:
      action_endpoint "/supplierInvoice/{id}/:addPayment" with:
      {"paymentDate": "<CSV_date>", "paymentType": <payment_type_id>, "amount": <abs_Ut_amount>, "partialPayment": true}
    - If NO supplier invoices found (0 results from 1c): create a ledger voucher instead:
+     First find the matching supplier from the CSV description (e.g. "Almeida Lda") in the supplier search results from step 1.
      create_resource /ledger/voucher with:
      {"date": "<CSV_date>", "description": "<CSV_description>", "postings": [
-       {"row": 1, "account": {"id": <7700_id>}, "amountGross": <abs_amount>, "amountGrossCurrency": <abs_amount>, "description": "<desc>"},
+       {"row": 1, "account": {"id": <2400_id>}, "amountGross": <abs_amount>, "amountGrossCurrency": <abs_amount>, "description": "<desc>", "supplier": {"id": <matched_supplier_id>}},
        {"row": 2, "account": {"id": <1920_id>}, "amountGross": <-abs_amount>, "amountGrossCurrency": <-abs_amount>, "description": "<desc>"}
      ]}
+     ⚠️ Use account 2400 (Leverandørgjeld/AP) NOT 7700! Supplier payments go through AP!
+     ⚠️ Include "supplier": {"id": X} on the AP posting! Match supplier name from CSV to search results.
 
 **C. Bank fee (Bankgebyr):**
    - If POSITIVE (Inn): create voucher DEBIT 1920 (+amount), CREDIT 7770 (-amount)
