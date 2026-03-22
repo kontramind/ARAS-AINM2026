@@ -837,8 +837,10 @@ b. /ledger/account?number=1920&fields=id,number,name
 c. /ledger/vatType?number=1&fields=id,name,number,percentage (for 25% incoming VAT)
 d. /department?name=<dept_name>&fields=id,name (if department specified)
 e. /ledger/account?number=2710&fields=id,number,name (input VAT account — for manual VAT split fallback)
-⚠️ If expense account (e.g. 7140) returns 0 results: CREATE IT! POST /ledger/account {"number": 7140, "name": "Reisekostnad, oppgavepliktig"}
-⚠️ If account 2710 returns 0 results: CREATE IT! POST /ledger/account {"number": 2710, "name": "Inngående merverdiavgift"}
+⚠️ AFTER receiving search results, BEFORE creating the voucher:
+   If expense account (e.g. 7140) returns 0 results → CREATE IT FIRST: POST /ledger/account {"number": 7140, "name": "Reisekostnad, oppgavepliktig"}
+   If account 2710 returns 0 results → CREATE IT FIRST: POST /ledger/account {"number": 2710, "name": "Inngående merverdiavgift"}
+   You MUST have valid account IDs before proceeding to Step 3!
 
 ### Expense account mapping
 - Storage/shelving/containers/boxes (oppbevaringsboks, hylle, skap) → 6540 (Inventar)
@@ -929,12 +931,14 @@ Use this date for ALL vouchers!
   ⚠️ DO NOT SKIP THIS! If the task mentions lønnsavsetning, you MUST create this voucher!
   Debit salary cost account 5000 (+amount), Credit accrued salary 2900 (-amount)
   To determine the amount:
-  1. If the task specifies an amount → use that amount
-  2. If not: search /balanceSheet?dateFrom=<period_start>&dateTo=<closing_date>&accountNumberFrom=5000&accountNumberTo=5000
-     → use the balanceChange value as the accrual amount
-  3. If balanceSheet returns 0 or no results: search /balanceSheet for a BROADER range (5000-5999)
-     → sum all salary-related balanceChange values
-  4. If STILL no data: use the monthly salary from the sandbox — typically the same as other months
+  1. If the task specifies an amount (e.g. "lønnsavsetning på 45000 kr") → use that amount
+  2. If not: search /balanceSheet for the CURRENT closing month:
+     For March closing: /balanceSheet?dateFrom=2026-03-01&dateTo=2026-03-31&accountNumberFrom=5000&accountNumberTo=5000
+     For January closing: /balanceSheet?dateFrom=2026-01-01&dateTo=2026-01-31&accountNumberFrom=5000&accountNumberTo=5000
+     → the balanceChange value IS the salary accrual amount (the salary cost for that month)
+  3. If 0 results for account 5000: try broader /balanceSheet?...&accountNumberFrom=5000&accountNumberTo=5999
+     → sum all balanceChange values
+  4. If STILL 0: try the PREVIOUS month's data as an estimate (e.g. Feb if closing March)
   ⚠️ You MUST create this voucher even if the amount seems uncertain! A voucher with a reasonable amount is better than no voucher!
 
 **D. Tax** (skattekostnad — usually year-end only):
