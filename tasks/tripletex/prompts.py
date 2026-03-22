@@ -918,14 +918,24 @@ Use this date for ALL vouchers!
   Debit 6010 (+amount), Credit 1209 (-amount). Use the specific accounts from the task if different.
 
 **B. Prepaid cost periodization** (forskuddsbetalt kostnad):
-  Debit expense account (+monthly_amount), Credit 1700 (-monthly_amount)
-  The task tells you which cost account to use (e.g. 6300 for rent, 6400 for insurance)
+  Debit expense account (+monthly_amount), Credit prepaid account (-monthly_amount)
+  Determine the EXPENSE account based on the PREPAID account number:
+  - From account 1700 (Forskuddsbetalt kostnad) → debit 6300 (Leie lokale) or the account specified in the task
+  - From account 1710 (Forskuddsbetalt forsikring) → debit 6400 (Forsikring)
+  - From account 1720 (Forskuddsbetalt leie) → debit 6300 (Leie lokale)
+  ⚠️ If the task specifies a specific expense account, use that! Otherwise, use the mapping above.
 
 **C. Salary accrual** (lønnsavsetning/påløpt lønn):
   ⚠️ DO NOT SKIP THIS! If the task mentions lønnsavsetning, you MUST create this voucher!
   Debit salary cost account 5000 (+amount), Credit accrued salary 2900 (-amount)
-  If no amount given: search /balanceSheet?dateFrom=<period_start>&dateTo=<closing_date>&accountNumberFrom=5000&accountNumberTo=5000 to find the salary balance, then accrue that amount.
-  If balance sheet returns 0 or is unavailable: use a reasonable default from the task context.
+  To determine the amount:
+  1. If the task specifies an amount → use that amount
+  2. If not: search /balanceSheet?dateFrom=<period_start>&dateTo=<closing_date>&accountNumberFrom=5000&accountNumberTo=5000
+     → use the balanceChange value as the accrual amount
+  3. If balanceSheet returns 0 or no results: search /balanceSheet for a BROADER range (5000-5999)
+     → sum all salary-related balanceChange values
+  4. If STILL no data: use the monthly salary from the sandbox — typically the same as other months
+  ⚠️ You MUST create this voucher even if the amount seems uncertain! A voucher with a reasonable amount is better than no voucher!
 
 **D. Tax** (skattekostnad — usually year-end only):
   ⚠️ DO NOT SKIP THIS! If the task mentions skattekostnad/tax, you MUST create this voucher!
