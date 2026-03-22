@@ -1,0 +1,36 @@
+# NorgesGruppen Grocery Bot — Training Requirements
+# --------------------------------------------------
+# Install with:
+#   pip install -r requirements.txt
+#
+# For GPU training (recommended):
+#   pip install -r requirements.txt --index-url https://download.pytorch.org/whl/cu124
+#
+# CRITICAL: ultralytics MUST be pinned to 8.1.0 — the competition sandbox
+# runs 8.1.0 and model weights are not backward-compatible.
+
+# ─── Core ─────────────────────────────────────────────────────────────────────
+ultralytics==8.1.0              # YOLOv8 — MUST match sandbox version
+torch==2.6.0                    # matches sandbox (CUDA 12.4 wheel)
+torchvision==0.21.0
+
+# ─── Data & image processing ─────────────────────────────────────────────────
+Pillow==10.2.0
+opencv-python-headless==4.9.0.80
+albumentations==1.3.1           # extra augmentations (optional — YOLO has built-in)
+numpy==1.26.4
+scipy==1.12.0
+
+# ─── Detection utilities ──────────────────────────────────────────────────────
+pycocotools==2.0.7              # COCO evaluation
+ensemble-boxes==1.0.9           # Weighted Boxes Fusion (TTA)
+supervision==0.18.0             # optional: visualisation helpers
+
+# ─── ONNX export (local) ──────────────────────────────────────────────────────
+onnx==1.16.0                    # for local export only; runtime is in sandbox
+onnxruntime-gpu==1.20.0         # optional — for local ONNX inference testing
+
+# ─── Misc ─────────────────────────────────────────────────────────────────────
+safetensors==0.4.2
+timm==0.9.12
+scikit-learn==1.4.0
