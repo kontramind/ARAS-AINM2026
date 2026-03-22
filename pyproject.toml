@@ -16,6 +16,7 @@ dependencies = [
     # --- PDF parsing ---
     "numpy>=2.3.5",
     "pymupdf>=1.27.2",
+    "pymupdf4llm>=0.0.17",
     # --- LLM ---
     "langchain>=1.2.10",
     "langchain-core>=1.2.16",
