@@ -596,7 +596,8 @@ The expense mapping is ONLY for when the task does NOT specify an account number
    a. /supplier by organizationNumber (fields=id,name)
    b. /ledger/account?number=<expense_acct>&fields=id,number,name (use the account from the task, or mapping below)
    c. /ledger/account?number=2400&fields=id,number,name (accounts payable)
-   d. /ledger/account?number=2710&fields=id,number,name (input VAT account — needed for manual VAT split fallback)
+   d. /ledger/account?number=2710&fields=id,number,name (input VAT — needed for manual VAT split fallback)
+      ⚠️ If 2710 returns 0: CREATE IT! POST /ledger/account {"number": 2710, "name": "Inngående merverdiavgift"}
    e. /ledger/vatType?number=1&fields=id,name,number,percentage (incoming 25% VAT type has number=1)
    f. /ledger/voucherType?fields=id,name (to find supplier invoice voucher type)
    If supplier NOT found: create_resource /supplier with name AND organizationNumber only!
@@ -836,6 +837,8 @@ b. /ledger/account?number=1920&fields=id,number,name
 c. /ledger/vatType?number=1&fields=id,name,number,percentage (for 25% incoming VAT)
 d. /department?name=<dept_name>&fields=id,name (if department specified)
 e. /ledger/account?number=2710&fields=id,number,name (input VAT account — for manual VAT split fallback)
+⚠️ If expense account (e.g. 7140) returns 0 results: CREATE IT! POST /ledger/account {"number": 7140, "name": "Reisekostnad, oppgavepliktig"}
+⚠️ If account 2710 returns 0 results: CREATE IT! POST /ledger/account {"number": 2710, "name": "Inngående merverdiavgift"}
 
 ### Expense account mapping
 - Storage/shelving/containers/boxes (oppbevaringsboks, hylle, skap) → 6540 (Inventar)
