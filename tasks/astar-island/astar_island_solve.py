@@ -1,5 +1,5 @@
 """
-feature_prior_script_v3.py
+astar_island_solve.py
 --------------------------
 Astar Island solver v3: Historical prior + observation calibration.
 
@@ -25,8 +25,46 @@ Architecture (3-layer prediction):
 
 
 Usage:
-  AINM_TOKEN=<jwt> python feature_prior_script_v3.py --concentrate-seed 0
-  AINM_TOKEN=<jwt> python feature_prior_script_v3.py --query-seeds 0:3p,1:2p
+  AINM_TOKEN=<jwt> python astar_island_solve.py --concentrate-seed 0
+  AINM_TOKEN=<jwt> python astar_island_solve.py --query-seeds 0:3p,1:2p
+
+CLI Parameters:
+  --round-id ROUND_ID
+      Round UUID to target. Auto-detected from the active round if omitted.
+
+  --token TOKEN
+      JWT bearer token. Falls back to the AINM_TOKEN environment variable.
+
+  --dry-run
+      Skip all API calls; useful for testing the prediction pipeline locally.
+
+  --skip-query
+      Submit using the historical prior only — no simulation queries are spent.
+
+  --concentrate-seed SEED
+      Spend ALL 50 queries on a single seed index (shortcut for --query-seeds N).
+
+  --query-seeds STRATEGY
+      Comma-separated query strategy string.  Examples:
+        '0'           – query seed 0 only (splits budget evenly over passes)
+        '0,1'         – query seeds 0 and 1
+        '0:3p,1:2p'   – 3 full passes on seed 0, 2 full passes on seed 1
+        'all'         – distribute queries across all 5 seeds
+
+  --alpha ALPHA
+      Per-cell blending weight for Layer 3 (default: 150).
+      Higher values keep predictions closer to the bucket average;
+      lower values let individual cell observations dominate sooner.
+
+  --hist-weight HIST_WEIGHT
+      Bayesian weight of the historical prior in Layer 2 (default: 200).
+      Equivalent to the number of pseudo-observations contributed by the
+      prior.  Increase to trust history more; decrease to let the current
+      round's observations override the prior faster.
+
+  --floor FLOOR
+      Minimum probability assigned to any class for any cell (default: 0.001).
+      Prevents log-score penalties from exploding on unseen classes.
 
 Historical data setup:
   Place past round data in data/ directory:

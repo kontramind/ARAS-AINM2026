@@ -1,5 +1,5 @@
 """
-tasks/aastar-island/data/fetch_data.py
+tasks/astar-island/data/fetch_data.py
 --------------------------------------
 Fetch and store all data needed by basic_script.py from the AINM API.
 
