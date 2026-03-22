@@ -958,10 +958,12 @@ Use this date for ALL vouchers!
 
 **E. Any other entry mentioned in the task**: Read the task prompt and create the voucher exactly as described!
 
-### Step 4: Balance sheet verification
+### Step 4: Balance sheet verification (VERIFY ONLY — do NOT create vouchers!)
 If the task says "kontroller at saldobalansen går i null" (verify balance = zero):
 Search /balanceSheet?dateFrom=<period_start>&dateTo=<closing_date>&accountNumberFrom=3000&accountNumberTo=9999 after ALL vouchers are created.
-Sum all balanceChange values — they should equal 0.
+⚠️ JUST VERIFY — do NOT create any "overføring resultat" or balancing vouchers!
+⚠️ "Kontroller" means CHECK/REPORT only. The balance might not be zero and that's OK.
+⚠️ Do NOT create vouchers to accounts 8960, 2050, 8990, or any "resultatoverføring" accounts!
 
 CRITICAL: Create EACH entry as its own SEPARATE voucher!
 CRITICAL: Execute EVERY step from your Step 0 checklist — missing even ONE means lost points!
