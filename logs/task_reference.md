@@ -1,9 +1,10 @@
 # Tripletex Task Reference — ARAS AINM2026
 
-**Date**: 2026-03-22
-**System**: FastAPI (Cloud Run) -> Router (Gemini Flash) -> Sub-Agent (Gemini Flash) -> Tripletex v2 API
+**Last Updated**: 2026-03-22 11:00 CET | **Score**: 65.94 | **Rank**: 75 | **Submissions**: 222
+**System**: FastAPI (Cloud Run, 300s timeout) -> Router (Gemini Flash) -> Sub-Agent (Gemini Flash) -> Tripletex v2 API
 **LLM**: Gemini 2.5 Flash (temperature=0.0) via langchain-google-genai
 **PDF Extraction**: pymupdf4llm (layout-preserving Markdown)
+**Scoring**: score ≈ raw_points / try_number (best across all tries kept). Past failures permanently cap max score.
 
 ---
 
@@ -363,15 +364,17 @@
 
 **Known Issues**:
 - Root cause: Account 7100 is locked to VAT code 0. Agent previously changed account to 6800 (wrong) instead of using manual VAT split.
-- Max possible score now: ~1.0 due to 10 tries
+- Account 2710 (Inngaende merverdiavgift) may NOT EXIST in sandbox — must create if 0 results
+- Max possible score now: ~0.73 due to 10 tries (8/11)
 
 **Fixes Applied**:
 - "Account selection priority" rule: NEVER change task-specified account
 - Manual VAT split fallback when account is VAT-locked
-- Account 2710 searched in parallel
+- Account 2710 searched in parallel + created if not found
+- vendorInvoiceNumber and voucherType included in fallback template
 
 **Ideas for Improvement**:
-- The fix is deployed but max achievable score is limited by high try count (~1.0). Verify fix works on next submission.
+- Score severely capped by try count. Max ~0.73 even with perfect result.
 
 ---
 
@@ -381,56 +384,58 @@
 |-------|-------|
 | Tier | T2 (x2) |
 | Score | 0.00 |
-| Tries | 8 |
+| Tries | 9 |
 | Router | payroll |
 | Max Iterations | 15 |
 
-**Description**: Run payroll for an employee — base salary + optional bonus.
+**Description**: Run payroll for an employee — base salary + optional bonus. The task itself often hints: "If salary API doesn't work, use manual vouchers on 5000-series accounts."
 
 **Example prompts**:
-- EN: "Run payroll for Emily Lewis (emily.lewis@example.org) for this month. The base salary is 53400 NOK. Add a one-time bonus of 16900 NOK on top of the base salary."
+- NO: "Kjor lonn for Lars Berg (lars.berg@example.org) for denne maneden. Grunnlonn er 40850 kr. Legg til engangsbonus pa 14800 kr. Dersom lonns-API-et ikke fungerer, kan du bruke manuelle bilag pa lonnskontoer (5000-serien)."
 
 **Relevant API Endpoints**:
 - `GET /employee?email=X` — fields=id,firstName,lastName
 - `GET /salary/type` — fields=id,number,name. Common: "1000" = Fastlonn/base salary
-- `GET /employee/employment?employeeId=X` — fields=id,startDate,endDate. Check if employment exists
-- `POST /employee/employment` — {"employee": {"id": X}, "startDate": "2026-01-01"}
-- `POST /employee/employment/details` — {"employment": {"id": X}, "date": "2026-01-01", "employmentType": "ORDINARY", "employmentForm": "PERMANENT", "remunerationType": "MONTHLY_WAGE", "workingHoursScheme": "NOT_SHIFT", "percentageOfFullTimeEquivalent": 100, "annualSalary": 0}
-- `POST /salary/transaction?generateTaxDeduction=true` — date, year, month, payslips with specifications
+- `GET /employee/employment?employeeId=X` — fields=id,startDate,endDate
+- `POST /employee/employment` — {"employee": {"id": X}, "startDate": "2026-01-01"} ⚠️ MUST use 2026-01-01, NOT today!
+- `POST /employee/employment/details` — full details (see below)
+- `POST /salary/transaction?generateTaxDeduction=true` — Approach A
+- `GET /ledger/account?number=5000` — salary cost (for Approach B fallback)
+- `GET /ledger/account?number=2910` — salary payable (for Approach B fallback)
+- `POST /ledger/voucher` — Approach B manual voucher
 
-**Salary Transaction Body**:
+**Solution Path — APPROACH A (try first)**:
+1. IN PARALLEL: search employee + salary types + accounts 5000 + account 2910
+2. Search /employee/employment?employeeId=X
+3. If NO employment: create employment (startDate="2026-01-01") + employment details
+4. POST /salary/transaction?generateTaxDeduction=true
+
+**Solution Path — APPROACH B (fallback if A fails)**:
+If salary/transaction OR employment creation fails → IMMEDIATELY switch:
 ```json
-{
-  "date": "YYYY-MM-DD",
-  "year": 2026,
-  "month": 3,
-  "payslips": [{
-    "employee": {"id": X},
-    "specifications": [
-      {"salaryType": {"id": Y}, "rate": 53400, "count": 1},
-      {"salaryType": {"id": Z}, "rate": 16900, "count": 1}
-    ]
-  }]
-}
+POST /ledger/voucher
+{"date": "YYYY-MM-DD", "description": "Lonn <name>", "postings": [
+  {"row": 1, "account": {"id": <5000_id>}, "amountGross": <BASE+BONUS>, "amountGrossCurrency": <BASE+BONUS>, "description": "Lonn", "employee": {"id": <emp_id>}},
+  {"row": 2, "account": {"id": <2910_id>}, "amountGross": <-(BASE+BONUS)>, "amountGrossCurrency": <-(BASE+BONUS)>, "description": "Skyldig lonn"}
+]}
 ```
-
-**Solution Path**:
-1. IN PARALLEL: search employee by email AND search /salary/type
-2. Search /employee/employment?employeeId=X to check if employment exists
-3. If NO employment found: create employment + employment details (CRITICAL prerequisite!)
-4. Find salary type IDs: base salary (number "1000" or name "fastlonn"), bonus type
-5. POST /salary/transaction?generateTaxDeduction=true with payslips + specifications
+⚠️ Use "postings" NOT "lines"! Use "amountGross" NOT "debit/credit"! Include "row" field!
 
 **Known Issues**:
-- Primary failure: Employee has no active employment -> /salary/transaction returns 422
-- Employment creation requires many fields (employmentType, employmentForm, remunerationType, workingHoursScheme, percentageOfFullTimeEquivalent, annualSalary)
-- Fix deployed but untested — max possible now ~1.25
+- Try 9: Employment creation failed (422 — missing dateOfBirth or wrong startDate)
+- Agent fell back to manual vouchers but used WRONG field names ("lines", "debit/credit")
+- Took 236 seconds (slow but within Cloud Run 300s timeout)
+- Max possible score now: ~0.80 (8/10) due to 9 tries
 
 **Fixes Applied**:
-- PAYROLL_PROMPT Step 3: "If NO employment found, create employment + employment details"
+- Approach B with CORRECT field names (postings, amountGross, row)
+- Employment startDate forced to "2026-01-01" (not today)
+- Employee ref on salary posting
+- Immediate switch to Approach B on any failure
 
 **Ideas for Improvement**:
-- Need a Task 12 submission to verify the employment prerequisite fix works. Max score limited by 8 tries.
+- The task HINTS to use manual vouchers. Approach B may be the expected path.
+- Score severely capped by try count. Max ~0.80.
 
 ---
 
@@ -762,60 +767,66 @@
 |-------|-------|
 | Tier | T3 (x4) |
 | Score | 0.00 |
-| Tries | 6 |
+| Tries | 7 |
 | Router | receipt |
 | Max Iterations | 15 |
 
 **Description**: Extract expense from a receipt image/PDF and book it as a voucher with correct VAT.
 
 **Example prompts**:
+- NO: "Vi trenger Togbillett fra denne kvitteringen bokfort pa avdeling Logistikk. Bruk riktig utgiftskonto og sorg for korrekt MVA-behandling."
 - DE: "Wir benotigen die Oppbevaringsboks-Ausgabe aus dieser Quittung in der Abteilung HR"
-- PT: "Precisamos da despesa de Tastatur deste recibo registada no departamento HR"
 - EN: "We need the Oppbevaringsboks expense from this receipt posted to department Lager"
 
 **Relevant API Endpoints**:
 - `GET /ledger/account?number=<expense_acct>` — expense account by mapping
 - `GET /ledger/account?number=1920` — bank account
+- `GET /ledger/account?number=2710` — input VAT (for manual VAT split fallback). CREATE if 0 results!
 - `GET /ledger/vatType?number=1` — incoming 25% VAT. Use the `id` field from result, NOT number!
 - `GET /department?name=X` — fields=id,name
+- `POST /ledger/account` — create missing accounts (7140, 2710)
 - `POST /ledger/voucher` — balanced postings
 
 **Expense Account Mapping**:
 - Storage/shelving/containers/boxes (oppbevaringsboks, hylle, skap) -> 6540 (Inventar)
-- Electronics/furniture/equipment (keyboard, monitor, chair, printer) -> 6540 (Inventar)
+- Electronics/furniture/equipment (keyboard, monitor, chair, printer, lampe, tastatur) -> 6540 (Inventar)
 - Paper/pens/office supplies -> 6500 (Kontorrekvisita)
-- Cleaning supplies -> 7160, Travel -> 7100
-- Food/coffee/catering/representasjon -> 7350 (Representasjon)
+- Cleaning supplies -> 7160
+- **Travel/transport/train/flight/taxi (togbillett, flybillett, reise, taxi) -> 7140 (Reisekostnad)**
+  ⚠️ Do NOT use 7100 (Bilgodtgjørelse) — it is LOCKED to no-VAT!
+- Food/coffee/catering/representasjon (middag, kaffemate, lunsj) -> 7350 (Representasjon)
 
 **Solution Path**:
-1. pymupdf4llm extracts receipt -> find the EXACT item matching the task prompt name
-2. Extract: item gross price (total incl VAT), receipt date, VAT rate
-3. IN PARALLEL: search expense account + bank 1920 + vatType + department
-4. Create voucher with DIFFERENT row numbers:
-   - For VAT-supporting accounts (6540, 6500, 7100, 7160):
-     - Row 1: expense with amountGross=GROSS, vatType={"id": X}, department={"id": X}
-     - Row 2: bank 1920 with amountGross=-GROSS (NO dimensions)
-   - For VAT-locked accounts (7350, 7340):
-     - Row 1: expense with amountGross=GROSS, department (NO vatType)
-     - Row 2: bank 1920 with amountGross=-GROSS
+1. pymupdf4llm extracts receipt -> find EXACT item matching task prompt name
+2. Extract: item GROSS price, receipt DATE, VAT rate
+3. IN PARALLEL: search expense account + bank 1920 + account 2710 + vatType + department
+   ⚠️ If expense account (e.g. 7140) returns 0: CREATE IT! `POST /ledger/account {"number": 7140, "name": "Reisekostnad, oppgavepliktig"}`
+   ⚠️ If account 2710 returns 0: CREATE IT! `POST /ledger/account {"number": 2710, "name": "Inngaende merverdiavgift"}`
+4. **TRY with vatType first** (for 6540, 6500, 7140, 7160):
+   - Row 1: expense with GROSS, vatType, department
+   - Row 2: bank 1920 with -GROSS (NO dimensions)
+5. **If 422 "last til mva-kode 0"** — MANUAL VAT SPLIT (do NOT just drop vatType!):
+   - net = gross / 1.25, vat = gross - net
+   - Row 1: expense with net (no vatType), department
+   - Row 2: account 2710 with vat
+   - Row 3: bank 1920 with -gross
+6. **For 7350/7340** (always VAT-locked): full gross, no vatType, no split
 
-**Known Issues**:
-- Before refactor: ALL receipt tasks classified as `ledger` -> wrong prompt
-- VAT-locked accounts cause 422 when agent tries to set vatType
-- Same-row dimension mismatch: department on expense but not bank -> 422
-- vatType ID confusion: agent used vatType number as ID
+**Known Issues (latest try 7)**:
+- Agent used account 7100 for "Togbillett" (train ticket) -> 422 "locked to mva-kode 0"
+- Then agent DROPPED vatType and posted full gross without any VAT treatment -> all 5 checks fail
+- Account 7140 has NEVER existed in any sandbox — must be created
 
 **Fixes Applied**:
-- RECEIPT_PROMPT: different row numbers for expense (row 1) and bank (row 2)
-- vatType + department go ONLY on expense posting
-- "vatType id from search is NOT the same as vatType number"
-- PDF extraction upgraded to pymupdf4llm
-- Receipt router category added
+- Travel items -> 7140 (NOT 7100) with explicit warning
+- Manual VAT split fallback with 2710 (net + VAT + gross structure)
+- Account 7140 and 2710 created if not found in sandbox
+- "NEVER just remove vatType and post gross — that loses the VAT deduction!"
 
 **Ideas for Improvement**:
-- New prompt only tested ONCE. Need more submissions to verify.
-- Watch for VAT-locked account handling
-- Ensure correct item identification from multi-item receipts
+- Max possible: 10/8 = 1.25 if perfect next try. Significant gain from 0.
+- KEY RISK: Account 7140 might also be VAT-locked — fallback handles this
+- PDF extraction confirmed working perfectly (pymupdf4llm)
 
 ---
 
@@ -825,61 +836,58 @@
 |-------|-------|
 | Tier | T3 (x4) |
 | Score | 0.60 |
-| Tries | 5 |
+| Tries | 8 |
 | Router | bank_recon |
 | Max Iterations | 30 |
 
 **Description**: Match CSV bank statement entries to open customer/supplier invoices in Tripletex.
 
-**Example prompts**:
-- EN: "Reconcile the bank statement (attached CSV) against open invoices in Tripletex"
-- DE: "Gleichen Sie den Kontoauszug (beigefugte CSV) mit den offenen Rechnungen in Tripletex ab"
-- NO: "Avstem bankutskriften (vedlagt CSV) mot apne fakturaer i Tripletex"
+**Example CSV format** (semicolon separator):
+```
+Dato;Forklaring;Inn;Ut;Saldo
+2026-01-18;Innbetaling fra Odegard AS / Faktura 1001;21750.00;;121750.00
+2026-01-28;Betaling Leverandor Strand AS;;-7400.00;155200.00
+2026-02-03;Renteinntekter;;-1985.42;137814.58
+2026-02-05;Bankgebyr;586.03;;138400.61
+```
 
 **Relevant API Endpoints**:
 - `GET /invoice/paymentType` — fields=id,description
-- `GET /invoice` — ?invoiceDateFrom=2020-01-01&invoiceDateTo=2030-12-31&fields=id,amount,invoiceDate,invoiceNumber,customer(id,name)&count=200
-- `GET /supplierInvoice` — ?invoiceDateFrom=2020-01-01&invoiceDateTo=2030-12-31&fields=id,amount,invoiceNumber,supplier(id,name)&count=200
-- `GET /ledger/account?number=1920` — bank account
-- `GET /supplier` — ?fields=id,name&count=200
-- `GET /ledger/account?number=7700` — fallback expense account
+- `GET /invoice` — fields=id,amount,invoiceDate,invoiceNumber,customer(id,name)&count=200
+- `GET /supplierInvoice` — fields=id,amount,invoiceNumber,supplier(id,name)&count=200
+- `GET /ledger/account` — 1920 (bank), 2400 (AP), 8040 (interest), 7770 (fees), 2920 (tax)
+- `GET /supplier` — fields=id,name&count=200
 - `PUT /invoice/{id}/:payment` — customer invoice payment
 - `PUT /supplierInvoice/{id}/:addPayment` — supplier invoice payment
-- `POST /ledger/voucher` — for unmatched entries (interest, fees, tax)
+- `POST /ledger/voucher` — for supplier payments (no invoices) and misc entries
 
 **Solution Path**:
-1. BULK FETCH IN PARALLEL:
-   - /invoice/paymentType
-   - All invoices (broad date range)
-   - All supplier invoices (broad date range)
-   - Bank account 1920
-   - All suppliers
-   - Account 7700 (fallback)
-2. Parse CSV and match each row:
-   - INCOMING (positive): match to customer invoice by amount + customer name
-   - OUTGOING (negative): match to supplier invoice. If no match: create voucher debit 7700, credit 1920
-   - OTHER (interest/tax/fees): create ledger voucher
-3. Register payments:
-   - Customer: `/invoice/{id}/:payment` with CSV date and amount
-   - Supplier: `/supplierInvoice/{id}/:addPayment`
-   - Interest income: debit 1920, credit 8040
-   - Bank fees: debit 7770, credit 1920
-   - Tax: debit 2920, credit 1920
-4. Process payments ONE AT A TIME sequentially
+1. BULK FETCH IN PARALLEL: paymentType + invoices + supplierInvoices + accounts (1920, 2400, 8040, 7770, 2920) + suppliers
+2. Parse CSV rows and process ONE AT A TIME sequentially:
+   - **Customer payment** ("Innbetaling fra X / Faktura N"): Match by invoiceNumber from CSV description. Use CSV amount (handles partial payments). `PUT /invoice/{id}/:payment`
+   - **Supplier payment** ("Betaling Leverandor/Fornecedor X"): If supplier invoices found: `PUT /supplierInvoice/:addPayment`. If NOT: voucher DEBIT 2400 (AP) with supplier ref, CREDIT 1920
+   - **Bank fee** (Bankgebyr): If positive → DEBIT 1920, CREDIT 7770. If negative → DEBIT 7770, CREDIT 1920
+   - **Interest** (Renteinntekter): If positive → DEBIT 1920, CREDIT 8040. If negative → DEBIT 8040, CREDIT 1920
+   - **Tax** (Skattetrekk): DEBIT 2920, CREDIT 1920
 
 **Known Issues**:
-- ALL 5 submissions were misrouted as `ledger` before router refactor -> used generic prompt
-- bank_recon has NEVER been correctly routed (0 submissions post-refactor)
-- HIGH RISK: router may still misclassify on next submission
+- Router works correctly now (verified in multiple submissions)
+- Try 7 scored 7/7 perfect (4/4 checks) — router and basic flow work
+- Tries 8-9 scored 2/10 — check 1 fails consistently when there are MORE invoices than CSV payments
+- Possible cause: agent matches by position/amount instead of by invoiceNumber
+- API invoiceNumber is "1" not "1001" — literal matching won't work
+- Supplier payments initially used 7700 (expense) instead of 2400 (AP) — fixed
 
 **Fixes Applied**:
-- BANK_RECON_PROMPT created with dedicated instructions
-- ROUTER_PROMPT includes bank_recon category with keywords
+- Explicit per-row CSV processing with categories A-E
+- Match by INVOICE NUMBER from CSV description, not amount or position
+- Sequential processing (ONE AT A TIME)
+- Supplier payments use account 2400 (AP) with supplier reference
+- Negative Renteinntekter handling (reverse direction)
 
 **Ideas for Improvement**:
-- CRITICAL: verify router correctly classifies bank reconciliation tasks
-- May need router reinforcement with more bank reconciliation keywords
-- Need real-world testing of BANK_RECON_PROMPT
+- Score capped: at 8+ tries, max gain ~0.28. LOW PRIORITY.
+- The invoiceNumber matching is ambiguous (CSV says 1001, API has 1). May need to match by customer name + closest amount.
 
 ---
 
@@ -954,8 +962,8 @@
 | Field | Value |
 |-------|-------|
 | Tier | T3 (x4) |
-| Score | 3.40 |
-| Tries | 3 |
+| Score | 3.40 ✅ |
+| Tries | 4 |
 | Router | order_invoice |
 | Max Iterations | 20 |
 
@@ -1003,8 +1011,8 @@
 - Score improved: 6/6 at try 3 = 3.40
 
 **Ideas for Improvement**:
-- Score is now 3.40. With 3 tries, already near optimal for try count.
-- Could potentially improve by using /:createReminder instead of manual voucher+order flow
+- Score is 3.40. FIXED and scoring perfect (6/6) on every submission. No further changes needed.
+- /:createReminder now available as alternative (dispatchType param fixed, boolean casing fixed)
 
 ---
 
@@ -1046,8 +1054,8 @@
 | Field | Value |
 |-------|-------|
 | Tier | T3 (x4) |
-| Score | 4.60 |
-| Tries | 5 |
+| Score | 6.00 ✅ |
+| Tries | 6 |
 | Router | ledger |
 | Max Iterations | 20 |
 
@@ -1095,7 +1103,7 @@
 |-------|-------|
 | Tier | T3 (x4) |
 | Score | 1.50 |
-| Tries | 5 |
+| Tries | 7 |
 | Router | project |
 | Max Iterations | 20 |
 
@@ -1128,19 +1136,22 @@
    d. Create activities SEQUENTIALLY (not parallel)
 
 **Known Issues**:
-- /balanceSheet endpoint was using /ledger/balanceSheet (403) — fixed
-- Account range should be 4000-7999 for expenses (8000+ are financial accounts)
-- Project number fix deployed
+- Try 7: 0/10 — agent added `id` to balanceSheet fields → 400 error → retried parallel → confused Jan/Feb → empty output
+- Try 6: 5/10 — checks 2,3,4 fail (wrong top 3 accounts identified)
+- Try 5: 5/10 — checks 1,2,4 fail
+- The agent may sort by ABSOLUTE Feb values instead of INCREASE (Feb-Jan)
+- Parallel balanceSheet queries can confuse which result is Jan vs Feb
 
 **Fixes Applied**:
-- /balanceSheet warning on PROJECT_PROMPT
-- accountNumberTo=7999 for expense accounts
-- Include "number" field using account number as string
+- /balanceSheet: removed top-level `id` from fields (causes 400)
+- Query months SEQUENTIALLY (not parallel) to avoid Jan/Feb confusion
+- "SHOW YOUR WORK" — forces agent to write out calculations
+- Include "number" field on project creation
+- Result data logging added for /balanceSheet debugging
 
 **Ideas for Improvement**:
-- Verify /balanceSheet fix helps on next submission
-- Ensure increase calculation is correct (difference, not absolute)
-- Make sure projectManager is always included
+- At 7 tries, max possible ~1.25. Limited value.
+- Core issue may be LLM arithmetic — consider adding explicit calculation template
 
 ---
 
@@ -1150,7 +1161,7 @@
 |-------|-------|
 | Tier | T3 (x4) |
 | Score | 2.73 |
-| Tries | 5 |
+| Tries | 6 |
 | Router | project |
 | Max Iterations | 20 |
 
@@ -1162,7 +1173,7 @@
 **Relevant API Endpoints**:
 - `GET /project?name=X` — search existing project
 - `POST /project` — name, startDate (REQUIRED), projectManager, customer, isFixedPrice, fixedprice, isInternal
-- `PUT /project` — update project (set budget/fixedprice, customer, projectManager). Include id in body.
+- `PUT /project` — ⚠️ BETA endpoint, may return 403. TRY it for budget, ignore 403 if it fails.
 - `GET /customer` — search by name/orgNumber
 - `GET /employee` — search by name/email
 - `GET /activity?name=X` — fields=id,name (NOT /project/activity!)
@@ -1189,14 +1200,18 @@
 CRITICAL: Steps 4->5->7->9 MUST be sequential!
 
 **Known Issues**:
-- Agent previously skipped budget update step
+- Try 6: 10/11 (91%), check 5 fails — budget not set on existing project
+- PUT /project is BETA and may return 403
+- Agent previously skipped budget step entirely
 
 **Fixes Applied**:
-- "MANDATORY BUDGET STEP - do NOT skip!" added to prompt
+- Budget step: TRY PUT /project, ignore 403 if it fails
+- If project doesn't exist: include ALL fields (fixedprice, customer, projectManager) in POST
+- Mandatory budget step with warning
 
 **Ideas for Improvement**:
-- Verify budget step works with recent code
-- Ensure sequential step ordering is followed
+- If PUT /project returns 403, budget can't be set on existing projects — check 5 will keep failing
+- At 6 tries, next perfect = 11/7 ≈ 1.57 (less than current 2.73 — CAPPED)
 
 ---
 
@@ -1206,7 +1221,7 @@ CRITICAL: Steps 4->5->7->9 MUST be sequential!
 |-------|-------|
 | Tier | T3 (x4) |
 | Score | 1.80 |
-| Tries | 4 |
+| Tries | 5 |
 | Router | yearend |
 | Max Iterations | 30 |
 
@@ -1235,19 +1250,22 @@ CRITICAL: Steps 4->5->7->9 MUST be sequential!
      5. Debit 8700, Credit 2920
 
 **Known Issues**:
-- Agent SKIPPED tax voucher because /ledger/balanceSheet -> 403 Forbidden
-- Before router refactor: misrouted as `ledger`
+- Try 5: 6/10 — checks 4,5 fail. Tax calculated as 267,612 instead of ~204,060
+- Root cause: /balanceSheet API does NOT reflect just-created vouchers! Agent used balanceSheet data WITHOUT adding depreciation/prepaid amounts
+- Correct formula: total_expenses = balanceSheet_expenses + depreciation_total + prepaid_total
+- Before: agent skipped tax entirely (403 on /ledger/balanceSheet). Now it executes but miscalculates.
 
 **Fixes Applied**:
-- YEAREND_PROMPT: Step 0 "ENUMERATE ALL TASKS" to prevent skipping
-- Explicit /balanceSheet endpoint with "NOT /ledger/balanceSheet" warning
-- Step-by-step tax calculation instructions
+- Step 0 "ENUMERATE ALL TASKS" to prevent skipping any step
+- /balanceSheet (NOT /ledger/balanceSheet) warning
+- Tax calc: "balanceSheet may NOT include just-created vouchers! Manually ADD depreciation + prepaid to expenses"
+- "SHOW YOUR WORK" for tax calculation
 - max_iter 20 -> 30
 
 **Ideas for Improvement**:
-- Verify /balanceSheet fix works and tax calculation is executed
-- With 4 tries, next perfect submission gives score = raw_points / 5
-- Ensure depreciation creates SEPARATE voucher per asset (not combined)
+- At 5 tries, 10/6 = 1.67 (less than current 1.80 — CAPPED unless raw score > 10.8)
+- The tax fix is critical but may not improve score due to try penalty
+- Depreciation rounding: ensure round to nearest integer
 
 ---
 
@@ -1304,16 +1322,22 @@ CRITICAL: Steps 4->5->7->9 MUST be sequential!
 
 ### Fixes Applied (2026-03-22 Session)
 
-| File | Change | Tasks Affected |
-|------|--------|---------------|
-| solve.py | `_clean_params()` — convert True/False -> true/false in URL params | All action endpoints |
-| prompts.py | YEAREND_PROMPT: Step 0 enumerate + /balanceSheet warning + mandatory salary/tax | 20, 30 |
-| prompts.py | TRAVEL_EXPENSE_PROMPT: mandatory deliver + approve | 13 |
-| prompts.py | SUPPLIER_INVOICE_PROMPT: account priority + manual VAT split fallback | 11 |
-| prompts.py | ORDER_INVOICE_PROMPT: vatType exempt in parallel search + mandatory steps | 25 |
-| prompts.py | LEDGER_PROMPT: balanced vouchers + bank credit + dimension voucher example | 27 |
-| prompts.py | yearend max_iter 20 -> 30 | 20, 30 |
-| prompts.py | /balanceSheet warning on LEDGER_PROMPT + PROJECT_PROMPT | 27, 28, 29, 30 |
+| File | Change | Tasks | Result |
+|------|--------|-------|--------|
+| solve.py | `_clean_params()` — True/False -> true/false in URL params | All | Fixed /:createReminder |
+| solve.py | Result data logging for /balanceSheet, /invoice, /supplierInvoice | 28, 23 | Debugging |
+| prompts.py | YEAREND: Step 0 enumerate + /balanceSheet + mandatory salary/tax | 20, 30 | Untested |
+| prompts.py | YEAREND: Tax calc manually adds depreciation+prepaid | 30 | Untested |
+| prompts.py | TRAVEL_EXPENSE: mandatory deliver + approve | 13 | Untested |
+| prompts.py | SUPPLIER_INVOICE: account priority + manual VAT split | 11 | Untested |
+| prompts.py | SUPPLIER_INVOICE: create account 2710 if not found | 11 | Untested |
+| prompts.py | ORDER_INVOICE: vatType exempt + dispatchType fix | 25 | ✅ 6/6 perfect |
+| prompts.py | LEDGER: balanced vouchers + bank credit + dimension example | 27 | ✅ 10/10 perfect |
+| prompts.py | RECEIPT: account 7140 (not 7100) + manual VAT split + create 7140/2710 | 22 | Untested |
+| prompts.py | PAYROLL: Approach B manual voucher fallback (correct fields) | 12 | Untested |
+| prompts.py | CORRECTIONS: voucher search includes supplier/customer/vatType | 24 | Untested |
+| prompts.py | BANK_RECON: rewritten with per-row processing + supplier via 2400 | 23 | Partial (check 1 fails) |
+| prompts.py | PROJECT: sequential balanceSheet + no id in fields + budget try PUT | 28, 29 | Try 7: 0/10 regression |
 
 ### Execution Time Benchmarks
 
