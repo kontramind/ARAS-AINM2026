@@ -21,10 +21,10 @@ Ground truth JSON format (H x W x 6 probability tensor):
 
 Usage:
   # Full fetch: initial states + ground truth for all completed rounds
-  AINM_TOKEN=<jwt> python tasks/aastar-island/data/fetch_data.py
+  AINM_TOKEN=<jwt> python tasks/astar-island/data/fetch_data.py
 
   # Skip ground truth (initial states only)
-  AINM_TOKEN=<jwt> python tasks/aastar-island/data/fetch_data.py --no-ground-truth
+  AINM_TOKEN=<jwt> python tasks/astar-island/data/fetch_data.py --no-ground-truth
 """
 
 from __future__ import annotations
@@ -41,16 +41,14 @@ import requests
 try:
     from dotenv import load_dotenv
 
-    load_dotenv(
-        Path(__file__).parent.parent.parent / ".env"
-    )  # project root .env
+    load_dotenv(Path(__file__).parent.parent.parent / ".env")  # project root .env
 except ImportError:
     pass  # python-dotenv not installed; rely on environment variable
 
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-THIS_DIR = Path(__file__).parent.resolve() / "data"  # tasks/aastar-island/data/
+THIS_DIR = Path(__file__).parent.resolve() / "data"  # tasks/astar-island/data/
 
 BASE_URL = "https://api.ainm.no/astar-island"
 NUM_SEEDS = 5
