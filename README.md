@@ -11,8 +11,8 @@ Each task lives on its own branch with a dedicated README, codebase, and deploym
 | Task | Branch | Description |
 |------|--------|-------------|
 | Tripletex | [`tripletex`](../../tree/tripletex) | AI accounting agent for Tripletex ERP — automated bookkeeping via the Tripletex v2 REST API |
-| NorgesGruppen | [`task-vision-NorgesGruppen`](../../tree/task-vision-NorgesGruppen) | Computer vision task for NorgesGruppen |
-| Astar Island | [`feature/ml-scripts`](../../tree/feature/ml-scripts) | ML prediction task for Astar Island |
+| NorgesGruppen | [`task-vision-NorgesGruppen`](../../blob/task-vision-NorgesGruppen/tasks/vision/README.md) | Computer vision task for NorgesGruppen |
+| Astar Island | [`feature/ml-scripts`](../../blob/feature/ml-scripts/tasks/astar-island/README.md) | ML prediction task for Astar Island |
 
 ---
 
